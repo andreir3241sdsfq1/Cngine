@@ -1,0 +1,936 @@
+=========================================================================
+  CNGINE v2 — FULL DOCUMENTATION (ENGLISH)
+  LGPL v3 | Chikatilo / sooborn / SGLauncher
+=========================================================================
+
+TABLE OF CONTENTS
+-----------------
+1. Project Structure
+2. Compiling (Windows, w64devkit / MinGW-w64)
+3. Quick Start — Minimal Game
+4. Module: engine_math.h — Math
+5. Module: core.h — Core & Game Loop
+6. Module: render.h — Renderer
+7. Module: physik.h — Physics
+8. Module: hitboxes.h — Hitbox System
+9. Module: audio.h — Audio
+10. Module: scripts.h — Lua Scripting
+11. Lua API (all bindings)
+12. Post-Effects (PostFX)
+13. Frequently Asked Questions
+
+=========================================================================
+1. PROJECT STRUCTURE
+=========================================================================
+
+Cngine_output/
+├── game.c                  <- your game code
+├── cmp.bat                 <- compilation script (Windows)
+├── scripts/
+│   └── example_script.lua  <- example Lua script
+└── engine/
+    ├── core.h / core.c     <- game loop, SDL window, input
+    ├── render.h / render.c <- pixel-buffer renderer, effects
+    ├── physik.h / physik.c <- particle physics
+    ├── hitboxes.h / hitboxes.c <- collision system
+    ├── audio.h / audio.c   <- audio (SDL2)
+    ├── scripts.h / scripts.c   <- Lua integration
+    ├── engine_math.h / engine_math.c <- math utilities
+    ├── postfx_config.h     <- post-effect configuration
+    ├── lua/                <- Lua 5.4 source code
+    └── sdl/                <- SDL2 (headers + lib)
+
+=========================================================================
+2. COMPILING (WINDOWS)
+=========================================================================
+
+Requirements:
+  - w64devkit (MinGW-w64) or equivalent GCC for Windows
+    Download: https://github.com/skeeto/w64devkit/releases
+  - gcc must be in PATH
+
+Steps:
+  1. Open a command prompt in the Cngine_output/ folder
+  2. Run:  cmp.bat
+  3. On success, game.exe will be created
+  4. Copy SDL2.dll next to game.exe
+     (SDL2.dll can be obtained from https://github.com/libsdl-org/SDL/releases)
+
+What cmp.bat does:
+  Step 1 — compiles Lua 5.4 (all .c files from lua/ directory)
+  Step 2 — compiles engine modules (engine_math, physik, render, core,
+            hitboxes, audio, postfx_config, scripts)
+  Step 3 — compiles game.c
+  Step 4 — links everything into game.exe with SDL2
+
+Compiler flags used:
+  -m64         64-bit build
+  -I.          current directory (engine/) in include paths
+  -Ilua        Lua headers
+  -Isdl        SDL2 headers (engine/sdl/)
+  -DLUA_USE_WINDOWS  required for Lua on Windows
+
+=========================================================================
+3. QUICK START — MINIMAL GAME
+=========================================================================
+
+  // game.c
+  #include "engine/core.h"
+  #include "engine/render.h"
+
+  typedef struct { float x, y; } MyData;
+
+  void my_init(GameState* gs) {
+      MyData* d = (MyData*)gs->user_data;
+      d->x = gs->window_width / 2.0f;
+      d->y = gs->window_height / 2.0f;
+  }
+
+  void my_update(GameState* gs, float dt) {
+      MyData* d = (MyData*)gs->user_data;
+      if (input_key(&gs->input, SDL_SCANCODE_RIGHT)) d->x += 100 * dt;
+      if (input_key(&gs->input, SDL_SCANCODE_LEFT))  d->x -= 100 * dt;
+      if (input_key(&gs->input, SDL_SCANCODE_ESCAPE)) game_quit(gs);
+  }
+
+  void my_render(GameState* gs, Renderer* r) {
+      MyData* d = (MyData*)gs->user_data;
+      renderer_draw_circle(r, vec2(d->x, d->y), 10, COLOR_WHITE, true);
+      renderer_draw_text(r, "Hello Cngine!", vec2(4, 4), COLOR_YELLOW, 1.0f);
+  }
+
+  int main(void) {
+      MyData data = {0};
+      GameState* gs = game_create("My Game", 640, 400, 60);
+      gs->user_data = &data;
+      gs->callbacks.init   = my_init;
+      gs->callbacks.update = my_update;
+      gs->callbacks.render = my_render;
+      game_run(gs);
+      game_destroy(gs);
+      return 0;
+  }
+
+=========================================================================
+4. MODULE: engine_math.h
+=========================================================================
+
+TYPES:
+  Vec2      — 2D vector { float x, y }
+  Vec3      — 3D vector { float x, y, z }
+  Vec4      — 4D vector { float x, y, z, w }
+  Quat      — quaternion { float x, y, z, w }
+  Mat4      — 4x4 matrix (row-major)
+  Rect      — rectangle { float x, y, w, h }
+  AABB      — axis-aligned bounding box { Vec2 min, max }
+  OBB       — oriented bounding box { Vec2 center, half_extents; float angle }
+  Circle    — circle { Vec2 center; float radius }
+  Line      — segment { Vec2 start, end }
+
+VEC2 — operations:
+  vec2(x, y)                  create
+  vec2_zero(), vec2_one()     constants
+  vec2_add(a, b)              addition
+  vec2_sub(a, b)              subtraction
+  vec2_mul(v, s)              scalar multiply
+  vec2_div(v, s)              divide
+  vec2_neg(v)                 negate
+  vec2_dot(a, b)              dot product
+  vec2_cross(a, b)            2D cross product (scalar)
+  vec2_length(v)              length
+  vec2_length_sq(v)           squared length
+  vec2_distance(a, b)         distance
+  vec2_normalize(v)           normalize
+  vec2_perp(v)                perpendicular (CCW)
+  vec2_rotate(v, angle)       rotate by angle (radians)
+  vec2_lerp(a, b, t)          linear interpolation
+  vec2_reflect(v, n)          reflect off normal
+  vec2_project(v, onto)       project onto vector
+  vec2_clamp_magnitude(v, m)  clamp length
+  vec2_angle(v)               angle of vector (atan2)
+  vec2_from_angle(a)          vector from angle
+  vec2_move_towards(cur, tgt, max_delta)
+  vec2_smooth_damp(cur, tgt, vel*, smooth_time, dt)
+
+AABB — operations:
+  aabb(x0, y0, x1, y1)            create
+  aabb_from_center(center, half)   from center and half-extents
+  aabb_center(a)                   center point
+  aabb_half(a)                     half-extents
+  aabb_expand(a, s)                expand by s
+  aabb_union(a, b)                 union of two AABBs
+  aabb_contains(a, point)          does it contain point?
+  aabb_overlaps(a, b)              do they overlap?
+  Field access: a.min.x, a.min.y, a.max.x, a.max.y
+
+MATH — utilities:
+  lerpf(a, b, t)           float linear interpolation
+  clampf(v, lo, hi)        clamp
+  clamp01(v)               clamp to [0,1]
+  remap(v, a,b, c,d)       remap from range [a,b] to [c,d]
+  wrap(v, lo, hi)          wrap around
+  snap(v, step)            snap to grid
+  move_towards(cur,tgt,d)  move toward target
+  fast_rsqrt(x)            fast inverse square root
+  fast_sin(x), fast_cos(x) fast approximations
+  ease_in_quad(t) ... ease_out_elastic(t) ... — 24 easing functions
+  simplex2(x, y)           simplex noise 2D
+  worley(x, y, seed)       Worley noise
+
+HSV/RGB:
+  hsv_to_rgb(HSV)          HSV → RGB
+  rgb_to_hsv(RGB)          RGB → HSV
+
+BEZIER:
+  bezier_quad(p0,p1,p2, t)           quadratic bezier point
+  bezier_cubic(p0,p1,p2,p3, t)       cubic bezier point
+  catmull_rom(p0,p1,p2,p3, t)        Catmull-Rom spline point
+
+MAT4:
+  mat4_identity()
+  mat4_translate(v)
+  mat4_scale(v)
+  mat4_rotate_z(a)
+  mat4_trs(pos, rot, scale)
+  mat4_ortho(l,r,b,t,n,f)
+  mat4_perspective(fov, aspect, n, f)
+  mat4_look_at(eye, target, up)
+  mat4_mul(a, b)
+  mat4_inverse(m)
+  mat4_mul_vec4(m, v)
+
+RNG:
+  rng_init(seed)            initialize RNG (xorshift64)
+  rng_next(rng*)            random uint64
+  rng_float(rng*)           [0,1]
+  rng_range(rng*, lo, hi)   float in range
+  rng_int(rng*, n)          int in [0, n)
+  rng_normal(rng*)          normal distribution
+  rng_circle(rng*)          random point in unit circle
+
+=========================================================================
+5. MODULE: core.h
+=========================================================================
+
+GameState* game_create(title, width, height, target_fps)
+  Creates a window and all engine subsystems.
+  Returns a pointer to GameState.
+
+void game_run(GameState* gs)
+  Starts the game loop. Blocks until exit.
+  Calls callbacks in order: init → update → render → cleanup.
+
+void game_destroy(GameState* gs)
+  Frees all resources.
+
+CALLBACKS (set via gs->callbacks):
+  void (*init)(GameState*)              called once before the loop
+  void (*update)(GameState*, float dt)  every frame, dt in seconds
+  void (*render)(GameState*, Renderer*) every frame after update
+  void (*handle_event)(GameState*, SDL_Event*)  raw SDL events
+  void (*cleanup)(GameState*)           called on exit
+
+GameState FIELDS:
+  gs->renderer        Renderer*       renderer
+  gs->physics_world   PhysicsWorld*   physics world
+  gs->input           Input           input state
+  gs->window_width    int
+  gs->window_height   int
+  gs->running         bool
+  gs->paused          bool
+  gs->time_scale      float           1.0 = normal speed
+  gs->delta_time      float
+  gs->elapsed_time    float
+  gs->fps             int
+  gs->user_data       void*           your game data
+
+CONTROL:
+  game_quit(gs)                    exit
+  game_pause(gs)                   pause
+  game_resume(gs)                  resume
+  game_set_time_scale(gs, scale)   slow motion / fast forward
+  game_get_delta_time(gs)          → float
+  game_get_elapsed(gs)             → float
+  game_get_fps(gs)                 → int
+  game_mouse_world(gs)             → Vec2 (mouse in world coords)
+
+INPUT (via gs->input):
+  input_key(inp, SDL_SCANCODE_*)         key held
+  input_key_pressed(inp, scancode)       pressed this frame
+  input_key_released(inp, scancode)      released this frame
+  input_mouse_btn(inp, button)           mouse button (0,1,2)
+  input_mouse_pressed(inp, button)       pressed this frame
+  input_mouse_pos(inp)                   → Vec2
+
+=========================================================================
+6. MODULE: render.h
+=========================================================================
+
+The renderer uses a pixel buffer of 320×200 (PB_W × PB_H).
+You can change these sizes by #define PB_W / PB_H before including.
+
+INITIALIZATION:
+  renderer_create(sdl_renderer)   created internally by game_create
+  renderer_destroy(r)
+  renderer_resize(r, w, h)
+  renderer_set_clear_color(r, color)
+
+COLOR (Color = {r,g,b,a} Uint8):
+  color_rgb(r,g,b)           opaque
+  color_rgba(r,g,b,a)        with alpha
+  color_lerp(a, b, t)        interpolate
+  color_mul(c, f)            multiply brightness
+  color_add(a, b)            add
+  color_from_hsv(h,s,v)      from HSV
+  color_from_u32(0xRRGGBBAA) from hex
+  color_invert(c)            invert
+  color_with_alpha(c, a)     new alpha
+
+Predefined colors:
+  COLOR_WHITE, COLOR_BLACK, COLOR_RED, COLOR_GREEN, COLOR_BLUE,
+  COLOR_YELLOW, COLOR_MAGENTA, COLOR_CYAN, COLOR_GRAY, COLOR_ORANGE,
+  COLOR_DARKGRAY, COLOR_TRANSPARENT, COLOR_PURPLE, COLOR_TEAL,
+  COLOR_LIME, COLOR_PINK, COLOR_BROWN, COLOR_NAVY, COLOR_MAROON, COLOR_OLIVE
+
+CAMERA:
+  renderer_set_camera(r, cam)           set camera (Camera struct)
+  renderer_move_camera(r, delta)        move camera
+  renderer_zoom_camera(r, factor)       change zoom
+  renderer_set_camera_zoom(r, zoom)     set zoom directly
+  renderer_shake_camera(r, trauma)      add screen shake (0-1)
+  renderer_camera_follow(r, target, dt) smooth follow
+  renderer_camera_update(r, dt)         update shake/smoothing
+  renderer_world_to_pixel(r, world)     → Vec2 in pixel buffer
+  renderer_world_to_screen(r, world)    → Vec2 on screen
+  renderer_screen_to_world(r, screen)   → Vec2 in world space
+
+FRAME:
+  renderer_clear(r)      clear the buffer
+  renderer_present(r)    send buffer to screen (with post-effects)
+
+PIXEL BUFFER (direct access):
+  pb_put(r, x, y, c)           draw pixel (no blend)
+  pb_blend(r, x, y, c)         draw pixel with alpha blend
+  pb_fill_rect(r, x,y,w,h, c) fill rectangle
+  pb_get(r, x, y)              → Color  read pixel
+  pb_put_world(r, world, c)    pixel in world coordinates
+
+PRIMITIVES:
+  renderer_draw_pixel(r, pos, c)
+  renderer_draw_line(r, a, b, c)
+  renderer_draw_line_aa(r, a, b, c)           anti-aliased
+  renderer_draw_line_thick(r, a, b, width, c) thick line
+  renderer_draw_rect(r, rect, c, filled)
+  renderer_draw_rect_gradient(r, rect, gradient)
+  renderer_draw_rect_rounded(r, rect, radius, c, filled)
+  renderer_draw_circle(r, center, radius, c, filled)
+  renderer_draw_circle_aa(r, center, radius, c)
+  renderer_draw_circle_outline(r, center, radius, thickness, c)
+  renderer_draw_ellipse(r, center, rx, ry, c, filled)
+  renderer_draw_ring(r, center, inner, outer, c)
+  renderer_draw_arc(r, center, radius, a0, a1, c)
+  renderer_draw_sector(r, center, radius, a0, a1, c)
+  renderer_draw_triangle(r, a, b, c, col, filled)
+  renderer_draw_triangle_gradient(r, a, b, c, ca, cb, cc)
+  renderer_draw_polygon(r, verts, n, c, filled)
+  renderer_draw_capsule(r, a, b, radius, c)
+  renderer_draw_arrow(r, from, to, head_size, c)
+  renderer_draw_shadow(r, pos, radius, opacity)
+  renderer_draw_aabb(r, aabb, c)
+  renderer_draw_obb(r, obb, c)
+  renderer_draw_bezier(r, p0,p1,p2, steps, c)         quadratic
+  renderer_draw_bezier3(r, p0,p1,p2,p3, steps, c)     cubic
+  renderer_draw_spline(r, points, n, steps_per_seg, c) Catmull-Rom
+
+TEXTURES:
+  renderer_load_texture(r, path)                   → Texture*
+  renderer_draw_texture(r, tex, pos, rot, scale)
+  renderer_draw_texture_ex(r, tex, pos, rot, scale2, pivot, tint, flip_x, flip_y)
+  renderer_draw_texture_rect(r, tex, src_rect, pos, scale, tint)
+  renderer_destroy_texture(tex)
+
+TEXT (built-in 5×7 bitmap font):
+  renderer_draw_text(r, text, pos, color, scale)
+  renderer_draw_text_centered(r, text, center, color, scale)
+  renderer_measure_text(text, scale)       → Vec2 (text size)
+  renderer_draw_int(r, val, pos, color, scale)
+  renderer_draw_float(r, val, decimals, pos, color, scale)
+
+DYNAMIC 2D LIGHTING:
+  renderer_add_light(r, pos, color, radius, intensity)   → id
+  renderer_remove_light(r, id)
+  renderer_move_light(r, id, pos)
+  renderer_set_light_flicker(r, id, strength)
+  renderer_set_light_color(r, id, color)
+  renderer_set_light_radius(r, id, radius)
+  renderer_get_light(r, id)              → Light*
+  renderer_apply_lighting(r)             apply lightmap to buffer
+  r->lighting_enabled = true/false
+  r->ambient_light = color_rgb(...)
+
+WEATHER & PARTICLE EFFECTS:
+
+  FireSim:
+    fire_create(hotspot_count)     → FireSim*
+    fire_set_wind(f, w)
+    fire_set_intensity(f, i)
+    fire_add_hotspot(f, norm_x)
+    fire_update(f, dt)
+    fire_render(r, f, px, py, pw, ph)
+
+  SmokeSim:
+    smoke_create()
+    smoke_emit(s, x, y, wind)
+    smoke_emit_color(s, x, y, wind, color)
+    smoke_update(s, dt, wind)
+    smoke_render(r, s)
+
+  RainSim:
+    rain_create()
+    rain_set_intensity(rn, i)
+    rain_update(rn, dt, wind)
+    rain_render(r, rn, wind)
+
+  SparkSim:
+    spark_create()
+    spark_emit(s, x, y, wind)
+    spark_emit_color(s, x, y, wind, color, speed)
+    spark_update(s, dt, wind)
+    spark_render(r, s)
+
+  SnowSim:
+    snow_create(flake_count)
+    snow_set_wind(s, wind)
+    snow_update(s, dt)
+    snow_render(r, s)
+
+  LightningSim:
+    lightning_create()
+    lightning_strike(l, from, to, branches)
+    lightning_update(l, dt)
+    lightning_render(r, l)
+
+  RippleSim:
+    ripple_create()
+    ripple_add(rs, pos, speed, max_radius, color)
+    ripple_update(rs, dt)
+    ripple_render(r, rs)
+
+  MetaballSim:
+    metaball_create()
+    metaball_add(ms, pos, radius, color)
+    metaball_set_position(ms, i, pos)
+    metaball_update(ms, dt)
+    metaball_render(r, ms)
+
+PARTICLE SYSTEM (general purpose):
+  ps_create()
+  ps_set_position(ps, x, y)
+  ps_emit(ps, count)          continuous emission
+  ps_burst(ps, count)         one-shot burst
+  ps_update(ps, dt)
+  ps_render(r, ps)
+  ps_stop(ps)
+  ps_play(ps)
+  ps_is_alive(ps)             → bool
+  Configuration fields:
+    ps->emit_rate              particles per second
+    ps->speed_min/max          speed range
+    ps->life_min/max           lifetime range
+    ps->size_min/max           size range
+    ps->color_start_min/max    start color range
+    ps->color_end_min/max      end color range
+    ps->gravity_scale          gravity multiplier
+    ps->drag                   drag coefficient
+    ps->emitter_shape          PS_EMITTER_POINT/CIRCLE/RECT/LINE
+    ps->render_mode            PS_RENDER_CIRCLE/SQUARE/CROSS/STAR
+
+TRAIL:
+  trail_create(lifetime, min_dist)
+  trail_add_point(t, pos, color)
+  trail_update(t, dt)
+  trail_render(r, t)
+  trail_clear(t)
+
+TILEMAP:
+  tilemap_create(tile_w, tile_h)
+  tilemap_add_layer(tm, texture, cols, map_w, map_h) → TilemapLayer*
+  tilemap_set_tile(layer, x, y, id)
+  tilemap_get_tile(layer, x, y) → int
+  tilemap_render(r, tm)
+  tilemap_render_layer(r, tm, layer_idx)
+  layer->parallax_x, parallax_y — parallax scrolling
+
+ANIMATED SPRITE:
+  anim_sprite_create(texture)
+  anim_sprite_add_clip(s, name, sx,sy, fw,fh, frames, fps, loop) → idx
+  anim_sprite_play(s, clip_idx)
+  anim_sprite_play_name(s, name)
+  anim_sprite_stop(s)
+  anim_sprite_update(s, dt)
+  anim_sprite_render(r, s, pos)
+
+PHYSICS DEBUG RENDER:
+  renderer_draw_particle(r, p)
+  renderer_draw_spring(r, s, color)
+  renderer_draw_cloth(r, cloth)
+  renderer_draw_softbody(r, body)
+  renderer_debug_physics(r, world)
+  renderer_debug_raycast(r, origin, dir, dist, hit*)
+
+=========================================================================
+7. MODULE: physik.h
+=========================================================================
+
+The physics world uses PBD (Position Based Dynamics), optional Verlet
+integration, and a spatial hash for O(n log n) collision detection.
+
+CREATION:
+  PhysicsWorld* physics_world_create(bounds_rect, time_step)
+  void physics_world_destroy(world)
+  void physics_world_reset(world)
+
+PARTICLES:
+  particle_create(world, pos, mass, radius, type) → Particle*
+  particle_destroy(world, p)
+  particle_apply_force(p, force_vec2)
+  particle_apply_impulse(p, impulse_vec2)
+  particle_apply_force_at(p, force, point)  — with angular component
+  particle_set_position(p, pos)             — teleport (no physics)
+  particle_set_layers(p, layer, mask)
+  particle_set_lifetime(p, seconds)         — -1 = infinite
+
+Particle types (ParticleType):
+  PARTICLE_TYPE_NORMAL, STATIC, WATER, SAND, GAS, CLOTH,
+  SOFT_BODY, RIGID, PROJECTILE, TRIGGER
+
+Collision layers:
+  LAYER_DEFAULT, LAYER_PLAYER, LAYER_ENEMY, LAYER_PROJECTILE,
+  LAYER_TRIGGER, LAYER_TERRAIN, LAYER_ALL
+
+Particle fields:
+  p->position, p->velocity, p->force
+  p->mass, p->radius, p->friction, p->restitution, p->damping
+  p->active, p->lifetime
+  p->layer, p->mask
+  p->user_data   — pointer to your data
+  p->debug_color — 0xRRGGBBAA
+
+EXPLOSION:
+  physics_explosion(world, center, radius, force)
+
+SPRINGS:
+  spring_create(world, a, b, stiffness, damping) → Spring*
+  spring_create_breakable(world, a, b, stiffness, damping, break_force)
+  spring_destroy(world, s)
+  spring_set_rest_length(s, length)
+
+JOINTS:
+  DistanceJoint* dist_joint_create(world, a, b, min_d, max_d)
+  RevoluteJoint* revolute_joint_create(world, pivot, body)
+  dist_joint_destroy(world, j)
+
+CLOTH:
+  cloth_create(world, top_left, bottom_right, cols, rows, mass_per_particle)
+  cloth_pin(cloth, x, y)           pin a node (make it static)
+  cloth_unpin(cloth, x, y)         unpin
+  cloth_apply_wind(cloth, wind)
+  cloth_tear_at(world, cloth, pos, radius)
+  cloth_set_tear_threshold(cloth, t)
+  cloth_destroy(world, cloth)
+
+SOFT BODY:
+  softbody_create_circle(world, center, radius, segments, mass, stiffness)
+  softbody_create_rectangle(world, min, max, sx, sy, mass, stiffness)
+  softbody_apply_force(body, force)
+  softbody_apply_pressure(body, world, dt)
+  softbody_center(body) → Vec2
+  softbody_destroy(world, body)
+
+TRIGGER ZONES:
+  TriggerZone* trigger_zone_create(world, aabb)
+  void trigger_zone_destroy(world, t)
+  bool trigger_zone_has_particle(t, p)
+  t->on_enter = my_enter_func;    callback on particle enter
+  t->on_exit  = my_exit_func;     callback on particle exit
+
+FORCE FIELDS:
+  force_field_create(world, type, pos, radius, strength)
+  force_field_destroy(world, f)
+  force_field_set_direction(f, dir)
+  Types: FORCE_FIELD_ATTRACTOR / REPELLER / VORTEX /
+         DIRECTIONAL / TURBULENCE / DRAG / WIND_ZONE
+
+RAYCASTING:
+  RaycastHit physics_raycast(world, origin, dir, max_dist, layer_mask)
+  int physics_overlap_circle(world, center, radius, layer_mask, out*, max)
+  int physics_overlap_rect(world, aabb, layer_mask, out*, max)
+
+  RaycastHit fields:
+    hit.hit        — bool
+    hit.point      — Vec2
+    hit.normal     — Vec2
+    hit.distance   — float
+    hit.particle   — Particle*
+
+UPDATE:
+  physics_world_update(world)   — called automatically by game_run
+
+WORLD SETTINGS:
+  physics_world_set_gravity(world, gravity_vec2)
+  physics_world_set_substeps(world, n)    — accuracy (1-8)
+  physics_world_set_iterations(world, n)  — PBD iterations
+  physics_world_clear_forces(world)
+  physics_world_kinetic_energy(world)     → float
+  physics_world_center_of_mass(world)     → Vec2
+
+PhysicsWorld CALLBACKS:
+  world->on_collision    = func(Particle*a, Particle*b, Vec2 point, Vec2 normal, float impulse)
+  world->on_particle_death = func(Particle*)
+  world->on_spring_break = func(Spring*)
+
+=========================================================================
+8. MODULE: hitboxes.h
+=========================================================================
+
+The hitbox system is independent from physics — it is used for game logic
+(attacks, pickup zones, detection). Supports AABB, Circle, OBB, Capsule,
+Polygon, and Composite hitboxes.
+
+CREATING HITBOXES:
+  hb_create_aabb(half_w, half_h)       → Hitbox*
+  hb_create_circle(radius)             → Hitbox*
+  hb_create_obb(half_w, half_h)        → Hitbox*
+  hb_create_capsule(radius, half_len)  → Hitbox*
+  hb_create_polygon(verts, count)      → Hitbox*
+  hb_create_composite()                → Hitbox* (container)
+  hb_composite_add(parent, child)
+  hb_destroy(hb)
+  hb_scale(hb, sx, sy)
+
+Hitbox fields:
+  hb->offset       Vec2    offset from owner
+  hb->rotation     float   local rotation (radians)
+  hb->layer        uint16  collision layer
+  hb->mask         uint16  collision mask (which layers it detects)
+  hb->active       bool
+  hb->is_trigger   bool    detection only, no physics response
+  hb->owner        void*   pointer to your object
+  hb->id           int     user ID
+  hb->on_collision          callback on collision
+
+TRANSFORM:
+  hb_world_aabb(hb, world_pos, world_rot)    → AABB
+  hb_world_center(hb, world_pos, world_rot)  → Vec2
+
+TESTS:
+  HitResult hb_test(a, pos_a, rot_a, b, pos_b, rot_b)
+  bool hb_contains_point(hb, world_pos, world_rot, point)
+  bool hb_raycast(hb, world_pos, world_rot, ray_origin, ray_dir, max_dist, out_t*)
+
+SWEEP (continuous collision detection):
+  HitResult hb_sweep(a, pos_a, rot_a, delta, b, pos_b, rot_b)
+
+HitResult fields:
+  result.hit     bool
+  result.point   Vec2   contact point
+  result.normal  Vec2   resolution normal (for A)
+  result.depth   float  penetration depth
+  result.t       float  time of contact [0,1] for sweep
+
+HITBOX MANAGER:
+  HitboxManager* hbm_create()
+  void hbm_destroy(mgr)
+  int  hbm_add(mgr, hb, pos, rot)              → index
+  void hbm_remove(mgr, idx)
+  void hbm_update_transform(mgr, idx, pos, rot)
+  void hbm_process(mgr)                         call all callbacks
+  int  hbm_query_hitbox(mgr, query, qpos, qrot, out_idx*, out_results*, max)
+  int  hbm_query_aabb(mgr, region_aabb, out_idx*, max)
+  int  hbm_raycast(mgr, origin, dir, dist, layer_mask, out_idx*, out_t*)
+
+DEBUG RENDER:
+  hb_debug_draw(r, hb, pos, rot, active_col, trigger_col, filled)
+  hbm_debug_draw_all(r, mgr, active_col, trigger_col)
+
+=========================================================================
+9. MODULE: audio.h
+=========================================================================
+
+Audio system built on SDL2 Audio with a software mixer.
+Up to 32 simultaneous channels, 128 sounds, 8 music tracks.
+
+INITIALIZATION:
+  AudioSystem* audio_create()
+  void audio_destroy(system)
+
+LOADING:
+  audio_load(system, path, name)    load WAV, assign a string name
+  audio_unload(system, name)        unload
+
+PLAYING SFX:
+  audio_play(system, name, volume, pitch, pan)  → channel_id
+    volume: 0.0-1.0, pitch: 0.5-2.0, pan: -1.0(left)..1.0(right)
+  audio_play_at(system, name, x, y, volume)     positional audio → channel_id
+  audio_stop(system, channel_id)
+  audio_pause_channel(system, channel_id)
+  audio_resume_channel(system, channel_id)
+  audio_fade_out(system, channel_id, seconds)
+
+MUSIC:
+  audio_play_music(system, name, volume, loop)
+  audio_stop_music(system)
+  audio_pause_music(system)
+  audio_resume_music(system)
+  audio_crossfade(system, name, fade_seconds)   smooth crossfade
+  audio_set_music_volume(system, volume)
+
+VOLUME:
+  audio_set_master_volume(system, volume)
+  audio_set_sfx_volume(system, volume)
+
+NAMED EVENTS:
+  audio_register_event(system, trigger_name, sound_name,
+                        vol_min, vol_max, pitch_min, pitch_max, cooldown)
+  audio_trigger_event(system, trigger_name)   play the event
+
+UPDATE:
+  audio_update(system, listener_x, listener_y)  — call each frame for positional audio
+
+=========================================================================
+10. MODULE: scripts.h
+=========================================================================
+
+Lua 5.4 integration. Each script has its own lua_State.
+Supports hot-reloading when a file changes.
+
+CREATION:
+  ScriptManager* scripts_create(game_state, audio_system, hitbox_manager)
+  void scripts_destroy(sm)
+
+LOADING:
+  int  scripts_load(sm, "scripts/player.lua", "player")  → idx or -1
+  bool scripts_reload(sm, idx)                hot-reload
+  void scripts_watch(sm, idx, true)           auto-reload on file change
+  void scripts_unload(sm, idx)
+  int  scripts_find(sm, "player")             → idx
+
+CALLING FROM C:
+  scripts_call_init(sm, idx)
+  scripts_call_update(sm, idx, dt)
+  scripts_call_render(sm, idx)
+  scripts_call_event(sm, idx, "SDL_KEYDOWN")
+  scripts_call_destroy(sm, idx)
+
+BULK CALLS:
+  scripts_init_all(sm)
+  scripts_update_all(sm, dt)
+  scripts_render_all(sm)
+  scripts_destroy_all(sm)
+  scripts_check_watches(sm, dt)   call each frame for auto-reload
+
+PASSING DATA C → LUA:
+  scripts_set_global_int(sm, idx, "score", 42)
+  scripts_set_global_float(sm, idx, "speed", 5.0f)
+  scripts_set_global_string(sm, idx, "name", "hero")
+
+READING DATA FROM LUA:
+  int   scripts_get_global_int(sm, idx, "score")
+  float scripts_get_global_float(sm, idx, "health")
+
+EXECUTING CODE:
+  scripts_exec_string(sm, idx, "player.x = 100")
+  scripts_exec_global(sm, "print('hello')")
+
+DIRECT ACCESS:
+  lua_State* scripts_get_state(sm, idx)
+  lua_State* scripts_global_state(sm)
+
+=========================================================================
+11. LUA API (engine bindings)
+=========================================================================
+
+All bindings are available automatically after scripts_create().
+
+LUA SCRIPT STRUCTURE:
+  function on_init()       -- called once at startup
+  function on_update(dt)   -- every frame, dt = delta time in seconds
+  function on_render()     -- after update, for drawing
+  function on_event(type)  -- SDL events ("SDL_QUIT", "SDL_KEYDOWN", etc.)
+  function on_destroy()    -- when script is unloaded
+
+--- ENGINE / CORE ---
+  engine.quit()
+  engine.pause(bool)
+  engine.set_time_scale(float)
+  engine.dt()           → float
+  engine.fps()          → int
+  engine.elapsed()      → float
+  engine.width()        → int  (buffer width)
+  engine.height()       → int  (buffer height)
+  engine.mouse_x()      → float
+  engine.mouse_y()      → float
+  engine.key_down(scancode)    → bool   (use Key.A, Key.SPACE, etc.)
+  engine.key_pressed(scancode) → bool   (only true this frame)
+
+Key codes (Key table):
+  Key.A...Key.Z, Key.NUM_0...Key.NUM_9
+  Key.SPACE, Key.ENTER, Key.ESCAPE, Key.BACKSPACE
+  Key.LEFT, Key.RIGHT, Key.UP, Key.DOWN
+  Key.LSHIFT, Key.RSHIFT, Key.LCTRL, Key.RCTRL
+  Key.TAB, Key.F1...Key.F12
+
+--- RENDER ---
+  render.clear()
+  render.draw_rect(x, y, w, h, r, g, b, a, filled)
+  render.draw_circle(x, y, radius, r, g, b, a, filled)
+  render.draw_line(x1, y1, x2, y2, r, g, b, a)
+  render.draw_text(text, x, y, r, g, b, a, scale)
+  render.set_clear_color(r, g, b)
+  render.camera_set(x, y)
+  render.camera_zoom(factor)
+  render.camera_shake(trauma)
+
+--- POST FX (Lua) ---
+  render.postfx_bloom(on, radius, strength, threshold)
+  render.postfx_vignette(on, strength)
+  render.postfx_grain(on, strength)
+  render.postfx_preset(name)
+    Presets: "retro", "cinematic", "horror", "neon", "none"
+
+--- AUDIO (Lua) ---
+  audio.load(path, name)
+  audio.play(name, volume, pitch, pan)          → channel_id
+  audio.play_at(name, x, y, volume)             → channel_id
+  audio.play_music(name, volume, loop)
+  audio.stop_music()
+  audio.crossfade(name, seconds)
+  audio.trigger(event_name)
+  audio.set_master(volume)
+  audio.set_music_vol(volume)
+  audio.set_sfx_vol(volume)
+  audio.register_event(trigger, sound, vmin, vmax, pmin, pmax, cooldown)
+
+--- PHYSICS (Lua) ---
+  phys.set_gravity(x, y)
+  phys.add_particle(x, y, mass, radius)        → particle_id
+  phys.apply_force(particle_id, fx, fy)
+  phys.explosion(x, y, radius, force)
+  phys.raycast(ox, oy, dx, dy, max_dist)       → hit(bool), px, py, nx, ny
+
+--- HITBOXES (Lua) ---
+  hitbox.add_aabb(x, y, half_w, half_h)        → idx
+  hitbox.add_circle(x, y, radius)              → idx
+  hitbox.update(idx, x, y)
+  hitbox.remove(idx)
+  hitbox.query_point(x, y)                     → table of indices
+
+=========================================================================
+12. POST-EFFECTS (PostFX)
+=========================================================================
+
+Post-effects are applied automatically in renderer_present().
+Configure through r->postfx fields or via Lua.
+
+BLOOM:
+  r->postfx.bloom           = true;
+  r->postfx.bloom_radius    = 3;
+  r->postfx.bloom_strength  = 1.5f;
+  r->postfx.bloom_threshold = 0.7f;
+
+VIGNETTE:
+  r->postfx.vignette          = true;
+  r->postfx.vignette_strength = 0.5f;
+  r->postfx.vignette_color    = COLOR_BLACK;
+
+CHROMATIC ABERRATION:
+  r->postfx.chromatic_aberration = true;
+  r->postfx.ca_strength          = 2.0f;
+
+SCANLINES (pixel CRT effect):
+  r->postfx.scanlines         = true;
+  r->postfx.scanlines_alpha   = 0.5f;
+  r->postfx.scanlines_gap     = 2;
+
+PIXELATE:
+  r->postfx.pixelate   = true;
+  r->postfx.pixel_size = 4;
+
+COLOR GRADING:
+  r->postfx.color_grade  = true;
+  r->postfx.saturation   = 1.2f;
+  r->postfx.contrast     = 1.1f;
+  r->postfx.brightness   = 1.0f;
+  r->postfx.gamma        = 1.0f;
+  r->postfx.color_tint   = color_rgba(255,240,200,255);
+
+FILM GRAIN:
+  r->postfx.film_grain      = true;
+  r->postfx.grain_strength  = 0.05f;
+
+HEAT HAZE:
+  r->postfx.heat_haze      = true;
+  r->postfx.heat_intensity = 0.8f;
+  r->postfx.heat_speed     = 1.0f;
+
+UNDERWATER:
+  r->postfx.underwater         = true;
+  r->postfx.underwater_distort = 0.3f;
+  r->postfx.underwater_tint    = color_rgba(30,80,180,200);
+
+NIGHT VISION:
+  r->postfx.night_vision       = true;
+  r->postfx.night_vision_noise = 0.1f;
+
+CRT:
+  r->postfx.crt           = true;
+  r->postfx.crt_curvature = 0.2f;
+
+DRUNK CAMERA:
+  r->postfx.drunk        = true;
+  r->postfx.drunk_amount = 0.5f;
+
+=========================================================================
+13. FREQUENTLY ASKED QUESTIONS
+=========================================================================
+
+Q: Why is the screen so small (320×200)?
+A: The engine uses a pixel buffer for a retro aesthetic.
+   It scales up to fill the window automatically.
+   To change resolution: add to cmp.bat before compiling:
+   -DPB_W=640 -DPB_H=360 (or any other size).
+
+Q: How do I add a sound?
+A: Only WAV format is supported. Use audio_load() from C or audio.load() from Lua.
+
+Q: Where do I get SDL2.dll?
+A: Download SDL2-2.x.x-win32-x64.zip from github.com/libsdl-org/SDL/releases
+   and place SDL2.dll next to game.exe.
+
+Q: How do world coordinates work?
+A: World coordinates = pixel coordinates in the 320×200 buffer.
+   The camera translates/scales the view. Use renderer_screen_to_world()
+   to convert mouse position to world space.
+
+Q: How do I enable Lua hot-reloading?
+A: Call scripts_watch(sm, idx, true) then scripts_check_watches(sm, dt) every frame.
+
+Q: What are the object limits?
+A: Physics particles — dynamic array, no hard limit.
+   HitboxManager — up to 1024 hitboxes (HBM_MAX).
+   Lights — up to 32 (MAX_LIGHTS).
+   Force fields — up to 16. Trigger zones — up to 16.
+   Audio channels — up to 32 (AUDIO_MAX_CHANNELS).
+   Loaded sounds — up to 128 (AUDIO_MAX_SOUNDS).
+
+Q: What SDL2 version is required?
+A: SDL2 2.0.x (2.0.18 or later recommended).
+
+Q: Can I change the buffer resolution per-platform?
+A: Yes. In cmp.bat add: -DPB_W=640 -DPB_H=480
+   Or define them in a header before including render.h.
+
+=========================================================================
+  License: LGPL v3
+  Authors: Chikatilo / sooborn / SGLauncher
+=========================================================================
